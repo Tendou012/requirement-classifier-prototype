@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 streamlit
 joblib
 torch
@@ -8,4 +9,3 @@ transformers
 openpyxl
 scikit-learn==1.6.1
 imbalanced-learn==0.14.2
-
