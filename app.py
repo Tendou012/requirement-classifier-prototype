@@ -43,7 +43,7 @@ st.sidebar.markdown("""
 # 3. MODEL PATHS — SVM ships in the repo, BERT loads from Hugging Face Hub
 # ==========================================
 SVM_PATH = "svm_model_optimized.pkl"   # small file, committed directly to GitHub
-BERT_REPO = "faizfikri033/distilbert-requirement-classifier"  # <-- change to YOUR HF repo ID
+BERT_REPO = "Tendou012/distillbert-requirement-classifier"  # confirmed HF repo
 BERT_MAX_LENGTH = 128                  # matches the weighted model's training tokenization
 
 # ------------------------------------------------------------------
