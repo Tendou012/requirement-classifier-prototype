@@ -6,6 +6,6 @@ pdfplumber
 python-docx
 transformers
 openpyxl
-scikit-learn
-imbalanced-learn
+scikit-learn==1.6.1
+imbalanced-learn==0.14.2
 
