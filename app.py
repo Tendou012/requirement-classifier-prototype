@@ -107,6 +107,7 @@ def split_into_sentences(text):
     return [s.strip() for s in sentences if len(s.strip()) > 12]
 
 def get_prediction(text, model_type):
+    """Returns the human-readable predicted category for ONE model."""
     if not text or str(text).strip() == "nan": return "Empty Content"
     if model_type == "SVM":
         pred_code = svm_model.predict([str(text)])[0]
@@ -122,7 +123,23 @@ def get_prediction(text, model_type):
 # 5. INPUT INTERFACE
 # ==========================================
 st.sidebar.divider()
-model_choice = st.sidebar.radio("Select Classification Engine:", ("SVM", "BERT"))
+st.sidebar.header("🔎 Analysis Mode")
+analysis_mode = st.sidebar.radio(
+    "Choose how requirements are classified:",
+    ("Single Engine", "Dual-Inference Consensus Check"),
+    help="Single Engine runs one model at a time. Dual-Inference runs BOTH "
+         "SVM and DistilBERT on every requirement and flags where they disagree."
+)
+
+if analysis_mode == "Single Engine":
+    model_choice = st.sidebar.radio("Select Classification Engine:", ("SVM", "BERT"))
+else:
+    model_choice = None
+    st.sidebar.info(
+        "Both the SMOTE-balanced SVM and the Weighted-Loss DistilBERT will "
+        "classify every requirement. Where they agree, the result is marked "
+        "✅ Verified. Where they disagree, it's flagged ⚠️ for human review."
+    )
 
 tab1, tab2 = st.tabs(["📄 Upload Document", "✍️ Paste Text"])
 
@@ -177,10 +194,28 @@ if st.session_state['temp_df'] is not None:
 
     if st.button("🚀 Start AI Analysis"):
         with st.spinner("Analyzing..."):
-            df['Predicted_Category'] = df[col_to_analyze].apply(lambda x: get_prediction(x, model_choice))
-            df['Type'] = df['Predicted_Category'].apply(lambda x: "Functional (F)" if "Functional" in x else "Non-Functional (NF)")
+            if analysis_mode == "Single Engine":
+                df['Predicted_Category'] = df[col_to_analyze].apply(lambda x: get_prediction(x, model_choice))
+                df['Type'] = df['Predicted_Category'].apply(lambda x: "Functional (F)" if "Functional" in x else "Non-Functional (NF)")
+                df['Consensus'] = None  # not applicable in single-engine mode
+            else:
+                # Dual-inference: run BOTH models on every row
+                df['Predicted_SVM'] = df[col_to_analyze].apply(lambda x: get_prediction(x, "SVM"))
+                df['Predicted_BERT'] = df[col_to_analyze].apply(lambda x: get_prediction(x, "BERT"))
+                df['Consensus'] = df.apply(
+                    lambda r: "✅ Agree" if r['Predicted_SVM'] == r['Predicted_BERT'] else "⚠️ Disagree",
+                    axis=1
+                )
+                # DistilBERT is the stronger champion model (69% Macro F1 vs SVM's 61%),
+                # so its prediction is used as the primary displayed category —
+                # the Consensus column is what tells you whether to trust it blindly
+                # or flag it for a second look.
+                df['Predicted_Category'] = df['Predicted_BERT']
+                df['Type'] = df['Predicted_Category'].apply(lambda x: "Functional (F)" if "Functional" in x else "Non-Functional (NF)")
+
             st.session_state['result_df'] = df
             st.session_state['final_col'] = col_to_analyze
+            st.session_state['mode'] = analysis_mode
 
 # ==========================================
 # 7. DASHBOARD (Remains stable with Session State)
@@ -188,20 +223,46 @@ if st.session_state['temp_df'] is not None:
 if 'result_df' in st.session_state:
     res = st.session_state['result_df']
     f_col = st.session_state['final_col']
+    mode = st.session_state.get('mode', 'Single Engine')
 
     st.divider()
     st.header("📊 Classification Dashboard")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total items", len(res))
-    m2.metric("Functional", len(res[res['Type'] == "Functional (F)"]))
-    m3.metric("Non-Functional", len(res[res['Type'] == "Non-Functional (NF)"]))
+
+    if mode == "Dual-Inference Consensus Check":
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total items", len(res))
+        m2.metric("Functional", len(res[res['Type'] == "Functional (F)"]))
+        m3.metric("Non-Functional", len(res[res['Type'] == "Non-Functional (NF)"]))
+        agree_count = len(res[res['Consensus'] == "✅ Agree"])
+        disagree_count = len(res[res['Consensus'] == "⚠️ Disagree"])
+        disagree_pct = round(100 * disagree_count / len(res), 1) if len(res) else 0
+        m4.metric("Model Disagreement", f"{disagree_pct}%", help=f"{disagree_count} of {len(res)} requirements — SVM and DistilBERT gave different labels.")
+    else:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total items", len(res))
+        m2.metric("Functional", len(res[res['Type'] == "Functional (F)"]))
+        m3.metric("Non-Functional", len(res[res['Type'] == "Non-Functional (NF)"]))
 
     st.subheader("📋 Summary Table")
     st.table(res.groupby(['Type', 'Predicted_Category']).size().reset_index(name='Count'))
 
-    st.subheader("🎯 Filtered Results")
-    choice = st.selectbox("Filter Category:", ["All"] + sorted(res['Predicted_Category'].unique()))
-    disp = res if choice == "All" else res[res['Predicted_Category'] == choice]
-    st.dataframe(disp[[f_col, 'Predicted_Category', 'Type']], use_container_width=True)
+    if mode == "Dual-Inference Consensus Check":
+        st.subheader("⚖️ Consensus Breakdown")
+        st.write(
+            "Rows flagged **⚠️ Disagree** are cases where SVM and DistilBERT "
+            "assigned different categories — these are good candidates for "
+            "human review before acting on the classification."
+        )
+        consensus_choice = st.selectbox("Filter by consensus:", ["All", "✅ Agree", "⚠️ Disagree"])
+        disp = res if consensus_choice == "All" else res[res['Consensus'] == consensus_choice]
+        st.dataframe(
+            disp[[f_col, 'Predicted_SVM', 'Predicted_BERT', 'Consensus']],
+            use_container_width=True
+        )
+    else:
+        st.subheader("🎯 Filtered Results")
+        choice = st.selectbox("Filter Category:", ["All"] + sorted(res['Predicted_Category'].unique()))
+        disp = res if choice == "All" else res[res['Predicted_Category'] == choice]
+        st.dataframe(disp[[f_col, 'Predicted_Category', 'Type']], use_container_width=True)
 
     st.download_button("📥 Download Result", res.to_csv(index=False).encode('utf-8'), "report.csv", "text/csv")
